@@ -12,7 +12,7 @@ import time
 import uuid
 import warnings
 
-from docker import Client as DockerClient
+import docker as dockermodule
 
 import aiopg
 from aiopg import sa
@@ -99,7 +99,7 @@ def session_id():
 
 @pytest.fixture(scope='session')
 def docker():
-    return DockerClient(version='auto')
+    return dockermodule.from_env()
 
 
 def pytest_addoption(parser):
@@ -126,16 +126,19 @@ def pytest_generate_tests(metafunc):
 @pytest.yield_fixture(scope='session')
 def pg_server(unused_port, docker, session_id, pg_tag, request):
     if not request.config.option.no_pull:
-        docker.pull('postgres:{}'.format(pg_tag))
-    container = docker.create_container(
+        docker.images.pull('postgres:{}'.format(pg_tag))
+    docker_container = docker.containers.create(
         image='postgres:{}'.format(pg_tag),
         name='aiopg-test-server-{}-{}'.format(pg_tag, session_id),
-        ports=[5432],
+        ports={'5432/tcp': 5432},
         detach=True,
     )
-    docker.start(container=container['Id'])
-    inspection = docker.inspect_container(container['Id'])
-    host = inspection['NetworkSettings']['IPAddress']
+    docker_container.start()
+    # api_client = dockermodule.APIClient()
+    # inspection = api_client.inspect_container(container.id)
+    # host = inspection['NetworkSettings']['IPAddress']
+
+    host = '127.0.0.1'
     pg_params = dict(database='postgres',
                      user='postgres',
                      password='mysecretpassword',
@@ -155,13 +158,16 @@ def pg_server(unused_port, docker, session_id, pg_tag, request):
             delay *= 2
     else:
         pytest.fail("Cannot start postgres server")
-    container['host'] = host
-    container['port'] = 5432
-    container['pg_params'] = pg_params
-    yield container
 
-    docker.kill(container=container['Id'])
-    docker.remove_container(container['Id'])
+    yield {
+        'host': host,
+        'port': 5432,
+        'pg_params': pg_params,
+        'docker_container': docker_container,
+    }
+
+    docker_container.kill()
+    docker_container.remove(v=True, force=True)
 
 
 @pytest.fixture
